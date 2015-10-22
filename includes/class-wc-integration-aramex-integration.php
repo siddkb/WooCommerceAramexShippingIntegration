@@ -48,7 +48,7 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
 		$this->faxnumber        =$this->get_option('faxnumber');
 		$this->cellphone        =$this->get_option('cellphone');
 		$this->emailaddress     =$this->get_option('emailaddress');
-		
+		$this->verbose_reporting          = true;
 
 		// Actions.
 		add_action( 'woocommerce_update_options_integration_' .  $this->id, array( $this, 'process_admin_options' ) );
@@ -56,6 +56,8 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
 		// Filters.
 		add_filter( 'woocommerce_settings_api_sanitized_fields_' . $this->id, array( $this, 'sanitize_settings' ) );
         add_filter( 'woocommerce_checkout_fields' , array($this,'add_shipping_phone_field'));
+        add_action('woocommerce_checkout_process', 'validate_shipping_phone_number');
+
 	}
 
 
@@ -292,6 +294,8 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
 	
 	public function add_shipping_phone_field($fields)
 	{
+    	global $current_user;
+    	$current_user=wp_get_current_user();
      $fields['shipping']['shipping_phone'] = array(
         'label'     => __('Phone', 'woocommerce'),
         'placeholder'   => _x('Phone', 'placeholder', 'woocommerce'),
@@ -299,10 +303,32 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
         'class'     => array('form-row-wide'),
         'clear'     => true
         );
-
+    if (is_user_logged_in())
+        {
+            $shipping_phone = get_user_meta($current_user->ID,'shipping_phone',true);
+            if (empty($shipping_phone))
+            $fields['shipping']['shipping_phone']['default']=get_user_meta($current_user->ID,'billing_phone',true);            
+            else
+            $fields['shipping']['shipping_phone']['default']=get_user_meta($current_user->ID,'shipping_phone',true);
+        }
      return $fields;
 	}
 	
+	public function validate_shipping_phone_number()
+	{
+     global $woocommerce;
+    // Check if set, if its not set add an error.
+        if ($_POST['ship_to_different_address']==1 && (!isset($_POST['shipping_phone']) || empty($_POST['shipping_phone'])))
+            wc_add_notice( '<strong>Please enter a shipping phone number.</strong>','error');
+        else{
+            if ($_POST['ship_to_different_address']==1){
+            global $current_user;
+            $current_user=wp_get_current_user();
+            update_user_meta($current_user->ID,'shipping_phone',$_POST['shipping_phone']);
+            }
+        }
+    }
+    
 	public function place_shipment_request($order_id)
 	{
     		$order = new WC_Order($order_id);
@@ -321,6 +347,58 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
         		$cashadditionalamount=$order->order_total;
         		$cashadditionaldescription="Cash to be picked up on delivery";
     		}
+    		
+    		if (isset($order->shipping_address_1) && !empty($order->shipping_address_1)){    		
+    		$consignee_address=  array(
+    										'Line1'					=> $order->shipping_address_1,
+    										'Line2'					=> $order->shipping_address_2,
+    										'Line3'					=> '',
+    										'City'					=> $order->shipping_city,
+    										'StateOrProvinceCode'   => $order->shipping_state,
+    										'PostCode'				=> $order->shipping_postcode,
+    										'CountryCode'			=> $order->shipping_country
+                                );
+            $consignee_contact=array(
+    										'Department'		=> '',
+    										'PersonName'		=> $order->shipping_first_name." ".$order->shipping_last_name,
+    										'Title'				=> '',
+    										'CompanyName'		=> $order->shipping_first_name." ".$order->shipping_last_name,
+    										'PhoneNumber1'		=> $order->shipping_phone,
+    										'PhoneNumber1Ext'	=> '',
+    										'PhoneNumber2'		=> '',
+    										'PhoneNumber2Ext'	=> '',
+    										'FaxNumber'			=> '',
+    										'CellPhone'			=> $order->shipping_phone,
+    										'EmailAddress'			=> $order->billing_email,
+    										'Type'				=> ''
+    										);
+            }else
+            {
+            $consignee_address=  array(
+    										'Line1'					=> $order->billing_address_1,
+    										'Line2'					=> $order->billing_address_2,
+    										'Line3'					=> '',
+    										'City'					=> $order->billing_city,
+    										'StateOrProvinceCode'   => $order->billing_state,
+    										'PostCode'				=> $order->billing_postcode,
+    										'CountryCode'				=> $order->billing_country
+                                );
+            $consignee_contact=array(
+    										'Department'			=> '',
+    										'PersonName'			=> $order->billing_first_name." ".$order->billing_last_name,
+    										'Title'				=> '',
+    										'CompanyName'		=> $order->billing_first_name." ".$order->billing_last_name,
+    										'PhoneNumber1'			=> $order->billing_phone,
+    										'PhoneNumber1Ext'		=> '',
+    										'PhoneNumber2'			=> '',
+    										'PhoneNumber2Ext'		=> '',
+    										'FaxNumber'			=> '',
+    										'CellPhone'			=> $order->billing_phone,
+    										'EmailAddress'			=> $order->billing_email,
+    										'Type'				=> ''
+    										);
+            }
+                            
     		$soapClient = new SoapClient(__DIR__.'/Shipping.wsdl');
             $params = array(
     			'Shipments' => array(
@@ -357,30 +435,9 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
     									'Reference1'	=> $order_id,
     									'Reference2'	=> '',
     									'AccountNumber' => '',
-    									'PartyAddress'	=> array(
-    										'Line1'					=> $order->shipping_address_1,
-    										'Line2'					=> $order->shipping_address_2,
-    										'Line3'					=> '',
-    										'City'					=> $order->shipping_city,
-    										'StateOrProvinceCode'	                => $order->shipping_state,
-    										'PostCode'				=> $order->shipping_postcode,
-    										'CountryCode'				=> $order->shipping_country
-    									),
+    									'PartyAddress'	=>$consignee_address,
     									
-    									'Contact' => array(
-    										'Department'			=> '',
-    										'PersonName'			=> $order->shipping_first_name." ".$order->shipping_last_name,
-    										'Title'				=> '',
-    										'CompanyName'		=> $order->shipping_first_name." ".$order->shipping_last_name,
-    										'PhoneNumber1'			=> $order->shipping_phone,
-    										'PhoneNumber1Ext'		=> '',
-    										'PhoneNumber2'			=> '',
-    										'PhoneNumber2Ext'		=> '',
-    										'FaxNumber'			=> '',
-    										'CellPhone'			=> $order->shipping_phone,
-    										'EmailAddress'			=> $order->billing_email,
-    										'Type'				=> ''
-    										),
+    									'Contact' => $consignee_contact,
     						),
     						
     						'ThirdParty' => array(
@@ -501,17 +558,20 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
 	);
 	
 	try {
-
-        update_post_meta($order_id,'aramex_request',json_encode($params));
+        update_post_meta($order_id,'aramex_createshipment_request',json_encode($params));
 		$auth_call = $soapClient->CreateShipments($params);
-		update_post_meta($order_id,'aramex_response',json_encode($auth_call));
-		if ($auth_call->Notifications->HasErrors==1)
+		update_post_meta($order_id,'aramex_createshipment_response',json_encode($auth_call));
+		if ($auth_call->Notifications->HasErrors==1 || $auth_call->HasErrors == 1)
 		    {
-    		    //Shipping call failed
-    		  $errormsg = $auth_call->Shipments->ProcessesedShipment->Notifications->Message;
-    		  $order->add_order_note($errormsg);  
-    		  $message = "The system was unable to place a shipment and pick up request for Oder ID".$order_id."/r/n The error we received from Aramex is as follows:/r/n".$errormsg."/r/n";
-    		  wp_mail(get_bloginfo('admin_email'), 'Shipping request failed. Order ID:'.$order_id, $message);
+        		    //Shipping call failed
+            		$msg = "Aramex Create Shipment Request Failed due to the following error(s):<br>";
+            		foreach ($auth_call->Notifications as $notification)
+            		    {
+                		    $msg.="Error ".$notification->Code.": ".$notification->Message."<br>";
+            		    }
+            		$order->add_order_note($msg);
+                    if ($this->verbose_reporting == true)
+                        wp_mail(get_bloginfo('admin_email'), 'Create Shipment request failed. Order ID:'.$order_id, $msg);
 		    }
 		  else
 		  {
@@ -570,6 +630,16 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
                     $order->add_order_note("Aramex Shipment Label: <a href='".$shipping_label_url."' target='_blank'>Click Here</a>");
                     update_post_meta($order_id,'shipping_label',$shipping_label_url);
                 }
+                else{
+            		$msg = "Aramex Shipment Label Request Failed due to the following error(s):<br>";
+            		foreach ($auth_call->Notifications as $notification)
+            		    {
+                		    $msg.="Error ".$notification->Code.": ".$notification->Message."<br>";
+            		    }
+            		$order->add_order_note($msg);
+                    if ($this->verbose_reporting == true)
+                        wp_mail(get_bloginfo('admin_email'), 'Shipment label request failed. Order ID:'.$order_id, $msg);
+        		}
                 } 
             catch (SoapFault $fault) 
                 {
@@ -587,26 +657,40 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
   		$soapClient = new SoapClient(__DIR__.'/Shipping.wsdl');
         date_default_timezone_set('Asia/Calcutta');
         $time = current_time('H',true);
-        $currentdate =  current_time("c",true);
+        $day = current_time('N');
         //If greater than 3:00 PM
         if (($time)>=15)
         {
-          $pickupdate = date("c",strtotime(date("Y-m-d H:i:s",mktime(11,30,0)).' + 2 days'));
-          $readytime = date("c",strtotime(date("Y-m-d H:i:s",mktime(12,30,0)).' + 2 days'));
-          $lastpickuptime = date("c",strtotime(date("Y-m-d H:i:s",mktime(17,30,0)).' + 1 days'));
-          $closingtime = date("c",strtotime(date("Y-m-d H:i:s",mktime(19,00,0)).' + 2 days'));
-          $shippingdatetime = $pickupdate;
-          $order->add_order_note('Order placed after 3:00 PM cut off time, scheduling pick up on t+2 days:'.date("Y-M-D H:i:s",strtotime($pickupdate)));
+                $offset = " + 2 days";
+                
+          $order->add_order_note('Order placed after 3:00 PM cut off time');
         }
         else
         {
-          $pickupdate = date("c",strtotime(date("Y-m-d H:i:s",mktime(11,30,0)).' + 1 days'));
-          $readytime = date("c",strtotime(date("Y-m-d H:i:s",mktime(12,30,0)).' + 1 days'));
-          $lastpickuptime = date("c",strtotime(date("Y-m-d H:i:s",mktime(17,30,0)).' + 1 days'));
-          $closingtime = date("c",strtotime(date("Y-m-d H:i:s",mktime(19,00,0)).' + 1 days'));
-          $shippingdatetime = $pickupdate;
-          $order->add_order_note('Order placed before 3:00 PM cut off time, scheduling pick up on t+1 day:'.date("Y-M-D H:i:s",strtotime($pickupdate)));
+                $offset =' + 1 days';
+            
+            $order->add_order_note('Order placed before 3:00 PM cut off time');
         }
+        switch ($day){
+            case '5':
+                $offset=' + 3 days';
+                break;
+            case '6':
+                $offset=' + 2 days';
+                break;
+            case '7':
+                $offset=' + 2 days';
+                break;
+            default:
+                break;
+        }
+        $format = 'Y-m-d\TH:i:s';
+        $pickupdate = date($format,strtotime(date("Y-m-d H:i:s",mktime(11,30,0)).$offset));
+        $readytime = date($format,strtotime(date("Y-m-d H:i:s",mktime(12,30,0)).$offset));
+        $lastpickuptime = strtotime(date($format,strtotime(date("Y-m-d H:i:s",mktime(17,30,0)).$offset)));
+        $closingtime = strtotime(date($format,strtotime(date("Y-m-d H:i:s",mktime(19,00,0)).$offset)));
+        $shippingdatetime = $pickupdate;
+        $order->add_order_note("Pick up request time:".date("Y-m-d H:i:s",strtotime($pickupdate)));
         	$params = array(
 			'Pickup' => array(
 								'PickupAddress'	=> array(
@@ -703,19 +787,30 @@ class WC_Integration_Aramex_Integration extends WC_Integration {
             	try {
         		$auth_call = $soapClient->CreatePickup($params);
             update_post_meta($order_id,'aramex_pickup_response',json_encode($auth_call));
-        		if (empty($auth_call->HasErrors) || $auth_call->HasError == 0)
+        		if (empty($auth_call->HasErrors) || $auth_call->HasErrors == 0)
         		{
                     $pickup_id = $auth_call->ProcessedPickup->ID;
                     $pickup_guid = $auth_call->ProcessedPickup->GUID;
-                    $order->add_order_note("Aramex Pickup Request Successfull <br> 
+                    $order->add_order_note("Aramex Pickup Request Successful <br> 
                     Pickup Request ID:".$pickup_id."<br>Pickup Request GUID:".$pickup_guid);
                     update_post_meta($order_id,'pickup_id',$pickup_id);
                     update_post_meta($order_id,'pickup_guid',$pickup_guid);
         		}
+        		else{
+            		$msg = "Aramex Pickup Request Failed due to the following error(s):<br>";
+            		foreach ($auth_call->Notifications as $notification)
+            		    {
+                		    $msg.="Error ".$notification->Code.": ".$notification->Message."<br>";
+            		    }
+            		$order->add_order_note($msg);
+                    if ($this->verbose_reporting == true)
+                    wp_mail(get_bloginfo('admin_email'), 'Pick up request failed. Order ID:'.$order_id, $msg);
+        		}
         	} catch (SoapFault $fault) {
         		$order->add_order_note("Failed creating Aramex pickup request. Error:".$fault->faultstring);
                  $message = "The system was unable to create an Aramex pickup request for Order ID".$order_id."/r/n The error we received from Aramex is as follows:/r/n".$fault->faultstring."/r/n";
-                 wp_mail(get_bloginfo('admin_email'), 'Pick up request failed. Order ID:'.$order_id, $message);
+                 if ($this->verbose_reporting == true)
+                     wp_mail(get_bloginfo('admin_email'), 'Pick up request failed. Order ID:'.$order_id, $message);
 
         	}
 	}
