@@ -25,37 +25,47 @@ if ( ! class_exists( 'WC_Aramex_Integration' ) ) :
 
 class WC_Aramex_Integration {
 
-	/**
-	* Construct the plugin.
-	*/
-	public function __construct() {
-		add_action( 'plugins_loaded', array( $this, 'init' ) );
-	}
+    /**
+     * Construct the plugin.
+     */
+    public function __construct() {
+        add_action( 'plugins_loaded', array( $this, 'init' ) );
+    }
 
-	/**
-	* Initialize the plugin.
-	*/
-	public function init() {
+    /**
+     * Initialize the plugin.
+     */
+    public function init() {
+        // Checks if WooCommerce is installed.
+        if ( class_exists( 'WC_Integration' ) ) {
+            // Include our integration class.
+            include_once 'includes/class-wc-integration-aramex-integration.php';
 
-		// Checks if WooCommerce is installed.
-		if ( class_exists( 'WC_Integration' ) ) {
-			// Include our integration class.
-			include_once 'includes/class-wc-integration-aramex-integration.php';
+            // Register the integration.
+            add_filter( 'woocommerce_integrations', array( $this, 'add_integration' ) );
+        } else {
+            // Add an admin notice if WooCommerce is not installed.
+            add_action( 'admin_notices', array( $this, 'woocommerce_missing_notice' ) );
+        }
+    }
 
-			// Register the integration.
-			add_filter( 'woocommerce_integrations', array( $this, 'add_integration' ) );
-		} else {
-			// throw an admin error if you like
-		}
-	}
+    /**
+     * Add a new integration to WooCommerce.
+     *
+     * @param array $integrations Existing integrations.
+     * @return array Modified integrations.
+     */
+    public function add_integration( $integrations ) {
+        $integrations[] = 'WC_Integration_Aramex_Integration';
+        return $integrations;
+    }
 
-	/**
-	 * Add a new integration to WooCommerce.
-	 */
-	public function add_integration( $integrations ) {
-		$integrations[] = 'WC_Integration_Aramex_Integration';
-		return $integrations;
-	}
+    /**
+     * Display an admin notice if WooCommerce is not installed.
+     */
+    public function woocommerce_missing_notice() {
+        echo '<div class="error"><p>' . __( 'WooCommerce Aramex Integration requires WooCommerce to be installed and active.', 'woocommerce-aramex-integration' ) . '</p></div>';
+    }
 
 }
 
